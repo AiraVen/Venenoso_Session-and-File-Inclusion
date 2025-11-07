@@ -1,9 +1,14 @@
 <?php
+require_once __DIR__ . 'db.php';
+require_once __DIR__ . '/api/Session.php';
+
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 if (empty($_SESSION['authenticated']) || empty($_SESSION['user'])) {
   header('Location: index.php?loginRequired=1');
   exit;
 }
+
+
 ?>
 <!DOCTYPE html>
 <html lang="en">

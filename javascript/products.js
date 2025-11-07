@@ -5,6 +5,39 @@
   // Try to normalize price string like '₱1,599' or '$149.99' to number
   function parsePrice(text){ if(!text) return 0; var t = text.replace(/[₱$,\s]/g,'').replace(/,/g,''); var n = Number(t); return isNaN(n)?0:n; }
 
+  // Login helpers: check session set by login-ui.js and open the login modal
+  function isLoggedIn(){
+    try{
+      var s = localStorage.getItem('nethshop_session');
+      if (!s) return false;
+      var obj = JSON.parse(s);
+      return !!(obj && (obj.user || obj.token));
+    }catch(e){ return false; }
+  }
+
+  function showLoginModal(){
+    try{
+      var el = document.getElementById('loginModal');
+      if (!el){
+        // fallback: trigger nav login button if present
+        var nav = document.getElementById('navLoginBtn'); if (nav) { try{ nav.click(); }catch(e){} };
+        return;
+      }
+      var modal = (typeof bootstrap !== 'undefined') ? (bootstrap.Modal.getInstance(el) || new bootstrap.Modal(el)) : null;
+      if (modal) modal.show();
+    }catch(e){
+      try{ var nav = document.getElementById('navLoginBtn'); if (nav) nav.click(); }catch(_){}
+    }
+  }
+
+  // pending action helpers (used when user clicks Buy while logged out)
+  function setPendingAction(action, product){
+    try{ sessionStorage.setItem('nethshop_pending', JSON.stringify({ action: action, product: product })); }catch(e){}
+  }
+  function getAndClearPendingAction(){
+    try{ var p = sessionStorage.getItem('nethshop_pending'); if (!p) return null; sessionStorage.removeItem('nethshop_pending'); return JSON.parse(p); }catch(e){ return null; }
+  }
+
   // Build a product object from a card element
   function productFromCard(card){
     var $card = $(card);
@@ -35,6 +68,7 @@
     // attach add handler
     var $addBtn = $('#pvAddBtn');
     $addBtn.off('click').on('click', function(){
+      if (!isLoggedIn()) { showLoginModal(); return; }
       if(window.Cart && window.Cart.addToCart){ 
         window.Cart.addToCart(product); 
         if (window.Toast && window.Toast.show) window.Toast.show(product.title + ' added to cart'); 
@@ -57,7 +91,11 @@
       $pvBuy = $('<button id="pvBuyBtn" class="btn btn-success ms-2">Buy now</button>');
       $addBtn.after($pvBuy);
     }
+    // accessibility: label the modal Buy button with product title
+    try{ $pvBuy.attr('aria-label', 'Buy ' + (product && product.title ? product.title : 'product')); }catch(e){}
     $pvBuy.off('click').on('click', function(){
+      // require login before buying
+      if (!isLoggedIn()) { showLoginModal(); return; }
       // add then navigate to checkout
       try { 
         if (window.Cart && window.Cart.addToCart) window.Cart.addToCart(product); 
@@ -94,8 +132,10 @@
           e.preventDefault(); 
           e.stopPropagation(); 
           // prefer data-product-id for stable id
-          var pid = $addBtn.attr('data-product-id'); 
+          var btn = $(this);
+          var pid = btn.attr('data-product-id'); 
           if (pid) prod.id = pid;
+          if (!isLoggedIn()) { showLoginModal(); return; }
           if(window.Cart && window.Cart.addToCart){ 
             window.Cart.addToCart(prod); 
             if (window.Toast && window.Toast.show) window.Toast.show(prod.title + ' added to cart'); 
@@ -114,28 +154,25 @@
       if ($actions.length){
         // only add if not present
         if (!$card.find('.buy-now').length){
-          var $buy = $('<a href="#" class="btn btn-success w-100 mt-2 buy-now">Buy now</a>');
+          var $buy = $('<button type="button" class="btn btn-success w-100 mt-2 buy-now">Buy now</button>');
           // if addBtn has data-product-id, copy it
           try { 
             var copyId = ($addBtn.length && $addBtn.attr) ? $addBtn.attr('data-product-id') : null; 
             if (copyId) $buy.attr('data-product-id', copyId); 
           } catch(e){}
+          // accessibility: label with product title when available
+          try{ $buy.attr('aria-label', 'Buy ' + (prod && prod.title ? prod.title : 'product')); }catch(e){}
           $actions.append($buy);
           $buy.off('click').on('click', function(ev){ 
             ev.preventDefault(); 
             ev.stopPropagation(); 
-            var pid = $buy.attr('data-product-id'); 
+            var btn = $(this);
+            var pid = btn.attr('data-product-id'); 
             if (pid) prod.id = pid; 
-            try { 
-              if (window.Cart && window.Cart.addToCart) window.Cart.addToCart(prod); 
-              else { 
-                var cart = JSON.parse(localStorage.getItem('nethshop_cart_v1')||'[]'); 
-                cart.push(prod); 
-                localStorage.setItem('nethshop_cart_v1', JSON.stringify(cart)); 
-              } 
-            } catch(e){}
-            var checkoutPath = (location.pathname.indexOf('/products/') !== -1) ? '../checkout.php' : 'checkout.php';
-            window.location.href = checkoutPath;
+            if (!isLoggedIn()) { try{ setPendingAction('buy', prod); }catch(e){} showLoginModal(); return; }
+            // show product details modal for confirmation before checkout
+            try{ showProduct(prod); }catch(e){}
+            setTimeout(function(){ try{ $('#pvBuyBtn').focus(); }catch(e){} }, 250);
           });
         }
       }
@@ -158,6 +195,7 @@
         if (pid) product.id = pid;
         $addBtn.off('click').on('click', function(e){ 
           e.preventDefault(); 
+          if (!isLoggedIn()) { showLoginModal(); return; }
           if(window.Cart && window.Cart.addToCart){ 
             window.Cart.addToCart(product); 
             if (window.Toast && window.Toast.show) window.Toast.show(product.title + ' added to cart'); 
@@ -172,25 +210,26 @@
         });
         // create a Buy Now button on product pages to add and go to checkout
         if (!$('.buy-now[data-product-id="'+product.id+'"]').length){
-          var $buyNowBtn = $('<a href="#" class="btn btn-success ms-2 buy-now">Buy now</a>');
+          var $buyNowBtn = $('<button type="button" class="btn btn-success ms-2 buy-now">Buy now</button>');
           // Place after addBtn
           $addBtn.after($buyNowBtn);
+          try{ $buyNowBtn.attr('aria-label','Buy ' + product.title); }catch(e){}
           $buyNowBtn.off('click').on('click', function(ev){ 
             ev.preventDefault(); 
-            try { 
-              if (window.Cart && window.Cart.addToCart) window.Cart.addToCart(product); 
-              else { 
-                var cart = JSON.parse(localStorage.getItem('nethshop_cart_v1')||'[]'); 
-                cart.push(product); 
-                localStorage.setItem('nethshop_cart_v1', JSON.stringify(cart)); 
-              } 
-            } catch(e){}
-            var checkoutPath = (location.pathname.indexOf('/products/') !== -1) ? '../checkout.php' : 'checkout.php';
-            window.location.href = checkoutPath;
+            if (!isLoggedIn()) { try{ setPendingAction('buy', product); }catch(e){} showLoginModal(); return; }
+            try{ showProduct(product); }catch(e){}
+            setTimeout(function(){ try{ $('#pvBuyBtn').focus(); }catch(e){} }, 250);
           });
         }
       }
     }
+    // check for pending actions from login flow (e.g., attempted cart add while logged out)
+    try{
+      var pending = getAndClearPendingAction();
+      if (pending && isLoggedIn() && pending.action === 'cart' && pending.product){
+        try{ showProduct(pending.product); }catch(e){}
+      }
+    }catch(e){}
   });
 
 })(window.jQuery);
